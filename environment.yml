@@ -1,0 +1,11 @@
+name: feplanner
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.9
+  - flask=2.3.3
+  - werkzeug=2.3.7
+  - rdkit=2023.9.1
+  - openfe
+  - pip 

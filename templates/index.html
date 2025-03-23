@@ -1,0 +1,472 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FEP+ Mapping Service</title>
+    <!-- Add vis.js for network visualization -->
+    <script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            line-height: 1.6;
+        }
+        h1, h2, h3 {
+            color: #333;
+            border-bottom: 1px solid #ddd;
+            padding-bottom: 10px;
+        }
+        .form-group {
+            margin-bottom: 15px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+        input[type="file"], 
+        input[type="number"],
+        select {
+            padding: 8px;
+            width: 100%;
+            box-sizing: border-box;
+        }
+        input[type="checkbox"] {
+            margin-right: 5px;
+        }
+        button {
+            background-color: #FF8C00;
+            color: white;
+            padding: 10px 15px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+        }
+        button:hover {
+            background-color: #E67E00;
+        }
+        .result {
+            margin-top: 20px;
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            background-color: #f9f9f9;
+            display: none;
+        }
+        #network-container {
+            width: 100%;
+            height: 500px;
+            border: 1px solid #ddd;
+            margin-top: 20px;
+            background-color: #f5f5f5;
+        }
+        .mol-img {
+            width: 150px;
+            height: 150px;
+            margin: 5px;
+            border: 1px solid #ddd;
+        }
+        .ligand-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+        }
+        .ligand-table th, .ligand-table td {
+            border: 1px solid #ddd;
+            padding: 8px;
+            text-align: left;
+        }
+        .ligand-table th {
+            background-color: #f2f2f2;
+        }
+        .results-container {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+        .tab-container {
+            margin-top: 20px;
+        }
+        .tab-buttons {
+            display: flex;
+            margin-bottom: 10px;
+        }
+        .tab-button {
+            padding: 10px 15px;
+            border: 1px solid #ddd;
+            background: #f1f1f1;
+            cursor: pointer;
+            margin-right: 5px;
+        }
+        .tab-button.active {
+            background: #FF8C00;
+            color: white;
+            border-color: #FF8C00;
+        }
+        .tab-content {
+            display: none;
+            padding: 15px;
+            border: 1px solid #ddd;
+        }
+        .tab-content.active {
+            display: block;
+        }
+        .loading {
+            text-align: center;
+            margin-top: 20px;
+            display: none;
+        }
+        .loading-spinner {
+            border: 5px solid #f3f3f3;
+            border-top: 5px solid #FF8C00;
+            border-radius: 50%;
+            width: 30px;
+            height: 30px;
+            animation: spin 2s linear infinite;
+            margin: 0 auto;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <h1>FEP+ Mapping Service</h1>
+    <p>Upload an SDF file containing molecules to generate an FEP+ map.</p>
+    
+    <!-- Upload Form -->
+    <form id="upload-form" enctype="multipart/form-data">
+        <div class="form-group">
+            <label for="sdf-file">SDF File:</label>
+            <input type="file" id="sdf-file" name="file" accept=".sdf" required>
+        </div>
+
+        <div class="form-group">
+            <label for="threed">Use 3D information for mapping:</label>
+            <input type="checkbox" id="threed" name="threed" checked>
+        </div>
+
+        <div class="form-group">
+            <label for="max3d">Maximum 3D distance for atom mapping:</label>
+            <input type="number" id="max3d" name="max3d" value="1.0" step="0.1" min="0.1">
+        </div>
+
+        <div class="form-group">
+            <label for="element-change">Allow changes in atom elements:</label>
+            <input type="checkbox" id="element-change" name="element_change">
+        </div>
+
+        <button type="submit">Generate FEP+ Map</button>
+    </form>
+    
+    <!-- Loading indicator -->
+    <div id="loading" class="loading">
+        <div class="loading-spinner"></div>
+        <p>Processing your file. This may take a minute...</p>
+    </div>
+
+    <!-- Results Section -->
+    <div id="result" class="result">
+        <h2>Results</h2>
+        
+        <!-- Tabs for different views -->
+        <div class="tab-container">
+            <div class="tab-buttons">
+                <div class="tab-button active" data-tab="network-tab">Network Graph</div>
+                <div class="tab-button" data-tab="compounds-tab">Compounds</div>
+                <div class="tab-button" data-tab="summary-tab">Summary</div>
+            </div>
+            
+            <!-- Network Graph Tab -->
+            <div id="network-tab" class="tab-content active">
+                <h3>FEP Network Graph</h3>
+                <div id="network-container"></div>
+                <p><b>Instructions:</b> Drag nodes to reposition. Scroll to zoom. Click on edges to view atom mappings.</p>
+            </div>
+            
+            <!-- Compounds Tab -->
+            <div id="compounds-tab" class="tab-content">
+                <h3>Compound Structures</h3>
+                <table class="ligand-table" id="ligand-table">
+                    <thead>
+                        <tr>
+                            <th>Structure</th>
+                            <th>Name</th>
+                            <th>Formula</th>
+                            <th>Atoms</th>
+                        </tr>
+                    </thead>
+                    <tbody id="ligand-tbody">
+                        <!-- Ligands will be added here dynamically -->
+                    </tbody>
+                </table>
+            </div>
+            
+            <!-- Summary Tab -->
+            <div id="summary-tab" class="tab-content">
+                <h3>Network Summary</h3>
+                <div id="result-content"></div>
+            </div>
+        </div>
+        
+        <button id="download-json" style="margin-top: 15px;">Download JSON</button>
+    </div>
+
+    <script>
+        // Tab functionality
+        document.querySelectorAll('.tab-button').forEach(button => {
+            button.addEventListener('click', function() {
+                // Remove active class from all buttons and content
+                document.querySelectorAll('.tab-button').forEach(btn => btn.classList.remove('active'));
+                document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
+                
+                // Add active class to clicked button and corresponding content
+                this.classList.add('active');
+                document.getElementById(this.dataset.tab).classList.add('active');
+            });
+        });
+        
+        document.getElementById('upload-form').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            
+            const formData = new FormData();
+            const fileInput = document.getElementById('sdf-file');
+            
+            if (fileInput.files.length === 0) {
+                alert('Please select an SDF file');
+                return;
+            }
+            
+            // Show loading indicator
+            document.getElementById('loading').style.display = 'block';
+            
+            formData.append('file', fileInput.files[0]);
+            
+            // Add other form values
+            formData.append('threed', document.getElementById('threed').checked);
+            formData.append('max3d', document.getElementById('max3d').value);
+            formData.append('element_change', document.getElementById('element-change').checked);
+            
+            try {
+                const response = await fetch('/plan-fep-map', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                // Hide loading indicator
+                document.getElementById('loading').style.display = 'none';
+                
+                const result = await response.json();
+                const resultContent = document.getElementById('result-content');
+                const resultDiv = document.getElementById('result');
+                
+                if (result.status === 'success') {
+                    // Basic summary of the results
+                    const network = result.network;
+                    
+                    // Display summary
+                    displaySummary(network);
+                    
+                    // Visualize network graph
+                    visualizeNetwork(network);
+                    
+                    // Display compounds in table
+                    displayCompounds(network.nodes, fileInput.files[0]);
+                    
+                    // Store the result for download
+                    window.resultData = result;
+                    
+                    // Show download button and result div
+                    resultDiv.style.display = 'block';
+                } else {
+                    resultContent.innerHTML = `<p>Error: ${result.message}</p>`;
+                    resultDiv.style.display = 'block';
+                    
+                    // If there's a traceback, display it
+                    if (result.traceback) {
+                        const pre = document.createElement('pre');
+                        pre.style.maxHeight = '300px';
+                        pre.style.overflow = 'auto';
+                        pre.style.padding = '10px';
+                        pre.style.backgroundColor = '#f5f5f5';
+                        pre.style.border = '1px solid #ddd';
+                        pre.textContent = result.traceback;
+                        resultContent.appendChild(pre);
+                    }
+                }
+            } catch (error) {
+                // Hide loading indicator
+                document.getElementById('loading').style.display = 'none';
+                
+                console.error('Error:', error);
+                document.getElementById('result-content').innerHTML = `<p>Error: ${error.message}</p>`;
+                document.getElementById('result').style.display = 'block';
+            }
+        });
+        
+        function displaySummary(network) {
+            let html = `
+                <p>Successfully generated FEP+ map with ${network.nodes.length} molecules and ${network.edges.length} edges.</p>
+                <h3>Nodes:</h3>
+                <ul>
+            `;
+            
+            network.nodes.forEach(node => {
+                html += `<li>${node.name} (${node.formula}, ${node.num_atoms} atoms)</li>`;
+            });
+            
+            html += `</ul><h3>Edges:</h3><ul>`;
+            
+            network.edges.forEach(edge => {
+                html += `<li>${edge.molecule_a} → ${edge.molecule_b} (Score: ${edge.score.toFixed(2)})</li>`;
+            });
+            
+            html += `</ul>`;
+            document.getElementById('result-content').innerHTML = html;
+        }
+        
+        function visualizeNetwork(network) {
+            // Create nodes array for visualization
+            const nodes = network.nodes.map(node => ({
+                id: node.name,
+                label: node.name,
+                title: `${node.name}<br>${node.formula}<br>${node.num_atoms} atoms`
+            }));
+            
+            // Create edges array for visualization
+            const edges = network.edges.map((edge, index) => ({
+                id: index,
+                from: edge.molecule_a,
+                to: edge.molecule_b,
+                label: edge.score.toFixed(2),
+                title: `Score: ${edge.score.toFixed(2)}<br>Atoms mapped: ${Object.keys(edge.mapping).length}`,
+                width: Math.max(1, edge.score * 3),  // Scale edge width by score
+                arrows: {
+                    to: { enabled: false }  // No arrow, undirected graph
+                },
+                mapping: edge.mapping  // Store the mapping for later use
+            }));
+            
+            // Create the network visualization
+            const container = document.getElementById('network-container');
+            const data = { nodes, edges };
+            const options = {
+                nodes: {
+                    shape: 'dot',
+                    size: 20,
+                    font: { size: 14 },
+                    borderWidth: 2,
+                    shadow: true
+                },
+                edges: {
+                    smooth: { type: 'continuous' },
+                    font: { size: 12 }
+                },
+                physics: {
+                    stabilization: true,
+                    barnesHut: {
+                        gravitationalConstant: -2000,
+                        springConstant: 0.04,
+                        springLength: 150
+                    }
+                },
+                interaction: { hover: true }
+            };
+            
+            const network_viz = new vis.Network(container, data, options);
+            
+            // Allow clicking on edges to show atom mapping details
+            network_viz.on("selectEdge", function(params) {
+                if (params.edges.length === 1) {
+                    const edgeId = params.edges[0];
+                    const edge = edges.find(e => e.id === edgeId);
+                    if (edge) {
+                        const mappingText = JSON.stringify(edge.mapping, null, 2);
+                        alert(`Atom Mapping: ${edge.from} → ${edge.to}\n${mappingText}`);
+                    }
+                }
+            });
+        }
+        
+        function displayCompounds(nodes, fileInput) {
+            const tbody = document.getElementById('ligand-tbody');
+            tbody.innerHTML = ''; // Clear existing content
+            
+            console.log(`Displaying ${nodes.length} compounds`);
+            
+            // Create table rows
+            nodes.forEach((node, index) => {
+                const row = document.createElement('tr');
+                
+                // Structure cell
+                const structureCell = document.createElement('td');
+                const img = document.createElement('img');
+                img.className = 'mol-img';
+                
+                // Use the SMILES-based SVG service if available
+                if (node.smiles) {
+                    const encodedSmiles = encodeURIComponent(node.smiles);
+                    img.src = `/molecule-svg-from-smiles/${encodedSmiles}?width=150&height=150`;
+                    console.log(`Using SMILES for molecule ${index}: ${node.smiles.substring(0, 30)}...`);
+                } else {
+                    // Fallback to placeholder
+                    const encodedName = encodeURIComponent(node.name);
+                    const encodedFormula = encodeURIComponent(node.formula);
+                    img.src = `/molecule-placeholder/${encodedName}/${encodedFormula}`;
+                    console.log(`No SMILES available for molecule ${index}, using placeholder`);
+                }
+                
+                img.alt = node.name;
+                img.onerror = function(e) {
+                    console.error(`Error loading molecule image for ${node.name}:`, e);
+                    const encodedName = encodeURIComponent(node.name);
+                    const encodedFormula = encodeURIComponent(node.formula);
+                    this.src = `/molecule-placeholder/${encodedName}/${encodedFormula}`;
+                };
+                structureCell.appendChild(img);
+                
+                // Name cell
+                const nameCell = document.createElement('td');
+                nameCell.textContent = node.name;
+                
+                // Formula cell
+                const formulaCell = document.createElement('td');
+                formulaCell.textContent = node.formula;
+                
+                // Atoms cell
+                const atomsCell = document.createElement('td');
+                atomsCell.textContent = node.num_atoms;
+                
+                // Add cells to row
+                row.appendChild(structureCell);
+                row.appendChild(nameCell);
+                row.appendChild(formulaCell);
+                row.appendChild(atomsCell);
+                
+                // Add row to table
+                tbody.appendChild(row);
+            });
+        }
+        
+        // Download results button
+        document.getElementById('download-json').addEventListener('click', function() {
+            if (!window.resultData) return;
+            
+            const dataStr = JSON.stringify(window.resultData, null, 2);
+            const dataUri = 'data:application/json;charset=utf-8,'+ encodeURIComponent(dataStr);
+            
+            const exportFileDefaultName = 'fep_map.json';
+            
+            const linkElement = document.createElement('a');
+            linkElement.setAttribute('href', dataUri);
+            linkElement.setAttribute('download', exportFileDefaultName);
+            linkElement.click();
+        });
+    </script>
+</body>
+</html>

@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FEP+ Map Generator</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css" rel="stylesheet">
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <style>
+        .node {
+            stroke: #fff;
+            stroke-width: 1.5px;
+        }
+        
+        .link {
+            stroke: #999;
+            stroke-opacity: 0.6;
+        }
+        
+        .network-container {
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            margin-top: 20px;
+            height: 500px;
+            background-color: #f8f9fa;
+        }
+        
+        .tooltip {
+            position: absolute;
+            background-color: white;
+            border: 1px solid black;
+            border-radius: 5px;
+            padding: 5px;
+            font-size: 12px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container mt-5">
+        <h1>FEP+ Map Generator</h1>
+        <p class="lead">Upload an SDF file to generate a Free Energy Perturbation (FEP+) map using the Lomap atom mapper.</p>
+        
+        <div class="card">
+            <div class="card-header">
+                Upload SDF File
+            </div>
+            <div class="card-body">
+                <form id="upload-form" enctype="multipart/form-data">
+                    <div class="mb-3">
+                        <label for="sdf-file" class="form-label">SDF File</label>
+                        <input class="form-control" type="file" id="sdf-file" accept=".sdf" required>
+                    </div>
+                    
+                    <div class="row">
+                        <div class="col-md-4">
+                            <div class="form-check mb-3">
+                                <input class="form-check-input" type="checkbox" id="threed" checked>
+                                <label class="form-check-label" for="threed">
+                                    Use 3D information
+                                </label>
+                            </div>
+                        </div>
+                        
+                        <div class="col-md-4">
+                            <div class="mb-3">
+                                <label for="max3d" class="form-label">Max 3D distance (Å)</label>
+                                <input type="number" class="form-control" id="max3d" value="1.0" step="0.1" min="0.1">
+                            </div>
+                        </div>
+                        
+                        <div class="col-md-4">
+                            <div class="form-check mb-3">
+                                <input class="form-check-input" type="checkbox" id="element-change">
+                                <label class="form-check-label" for="element-change">
+                                    Allow element changes
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <button type="submit" class="btn btn-primary">Generate FEP+ Map</button>
+                </form>
+            </div>
+        </div>
+        
+        <div id="loading" class="d-none text-center mt-4">
+            <div class="spinner-border text-primary" role="status">
+                <span class="visually-hidden">Loading...</span>
+            </div>
+            <p>Processing your file. This may take a moment...</p>
+        </div>
+        
+        <div id="results" class="d-none mt-4">
+            <h3>Network Results</h3>
+            <div class="row">
+                <div class="col-md-8">
+                    <div class="network-container">
+                        <svg id="network-viz" width="100%" height="100%"></svg>
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <div class="card">
+                        <div class="card-header">Network Statistics</div>
+                        <div class="card-body">
+                            <p><strong>Nodes:</strong> <span id="node-count">0</span></p>
+                            <p><strong>Edges:</strong> <span id="edge-count">0</span></p>
+                            <p><strong>Avg Score:</strong> <span id="avg-score">0</span></p>
+                        </div>
+                    </div>
+                    
+                    <div class="card mt-3">
+                        <div class="card-header">Selected Edge</div>
+                        <div class="card-body" id="edge-details">
+                            <p class="text-muted">Click on an edge to see details</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div id="error-message" class="alert alert-danger d-none mt-4"></div>
+    </div>
+    
+    <script>
+        document.getElementById('upload-form').addEventListener('submit', function(e) {
+            e.preventDefault();
+            
+            // Get form data
+            const fileInput = document.getElementById('sdf-file');
+            const threed = document.getElementById('threed').checked;
+            const max3d = document.getElementById('max3d').value;
+            const elementChange = document.getElementById('element-change').checked;
+            
+            if (!fileInput.files.length) {
+                showError('Please select an SDF file to upload');
+                return;
+            }
+            
+            // Create form data
+            const formData = new FormData();
+            formData.append('file', fileInput.files[0]);
+            formData.append('threed', threed);
+            formData.append('max3d', max3d);
+            formData.append('element_change', elementChange);
+            
+            // Show loading indicator
+            document.getElementById('loading').classList.remove('d-none');
+            document.getElementById('results').classList.add('d-none');
+            document.getElementById('error-message').classList.add('d-none');
+            
+            // Send request to API
+            fetch('/plan-fep-map', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                // Hide loading indicator
+                document.getElementById('loading').classList.add('d-none');
+                
+                if (data.status === 'error') {
+                    showError(data.message);
+                    return;
+                }
+                
+                // Display results
+                document.getElementById('results').classList.remove('d-none');
+                visualizeNetwork(data.network);
+            })
+            .catch(error => {
+                document.getElementById('loading').classList.add('d-none');
+                showError('Error processing request: ' + error.message);
+            });
+        });
+        
+        function showError(message) {
+            const errorElement = document.getElementById('error-message');
+            errorElement.textContent = message;
+            errorElement.classList.remove('d-none');
+        }
+        
+        function visualizeNetwork(network) {
+            // Update statistics
+            document.getElementById('node-count').textContent = network.nodes.length;
+            document.getElementById('edge-count').textContent = network.edges.length;
+            
+            // Calculate average score
+            const avgScore = network.edges.reduce((sum, edge) => sum + edge.score, 0) / network.edges.length;
+            document.getElementById('avg-score').textContent = avgScore.toFixed(3);
+            
+            // Clear previous visualization
+            const svg = d3.select("#network-viz");
+            svg.selectAll("*").remove();
+            
+            // Create force simulation
+            const width = svg.node().clientWidth;
+            const height = svg.node().clientHeight;
+            
+            // Create tooltip
+            const tooltip = d3.select("body").append("div")
+                .attr("class", "tooltip")
+                .style("opacity", 0);
+            
+            // Create force layout
+            const simulation = d3.forceSimulation()
+                .force("link", d3.forceLink().id(d => d.name).distance(100))
+                .force("charge", d3.forceManyBody().strength(-300))
+                .force("center", d3.forceCenter(width / 2, height / 2));
+            
+            // Transform data for D3
+            const nodes = network.nodes;
+            const links = network.edges.map(edge => ({
+                source: edge.molecule_a,
+                target: edge.molecule_b,
+                score: edge.score,
+                mapping: edge.mapping
+            }));
+            
+            // Create links
+            const link = svg.append("g")
+                .attr("class", "links")
+                .selectAll("line")
+                .data(links)
+                .enter().append("line")
+                .attr("class", "link")
+                .style("stroke-width", d => Math.max(1, d.score * 5))
+                .on("click", function(event, d) {
+                    // Show edge details when clicked
+                    const detailsDiv = document.getElementById('edge-details');
+                    detailsDiv.innerHTML = `
+                        <p><strong>From:</strong> ${d.source}</p>
+                        <p><strong>To:</strong> ${d.target}</p>
+                        <p><strong>Score:</strong> ${d.score.toFixed(3)}</p>
+                        <p><strong>Mapped Atoms:</strong> ${Object.keys(d.mapping).length}</p>
+                    `;
+                });
+            
+            // Create nodes
+            const node = svg.append("g")
+                .attr("class", "nodes")
+                .selectAll("circle")
+                .data(nodes)
+                .enter().append("circle")
+                .attr("class", "node")
+                .attr("r", 8)
+                .attr("fill", "#1f77b4")
+                .on("mouseover", function(event, d) {
+                    // Show tooltip on hover
+                    tooltip.transition()
+                        .duration(200)
+                        .style("opacity", .9);
+                    tooltip.html(`
+                        <strong>${d.name}</strong><br/>
+                        Atoms: ${d.num_atoms}<br/>
+                        Formula: ${d.formula}
+                    `)
+                        .style("left", (event.pageX + 10) + "px")
+                        .style("top", (event.pageY - 28) + "px");
+                })
+                .on("mouseout", function() {
+                    // Hide tooltip
+                    tooltip.transition()
+                        .duration(500)
+                        .style("opacity", 0);
+                })
+                .call(d3.drag()
+                    .on("start", dragstarted)
+                    .on("drag", dragged)
+                    .on("end", dragended));
+            
+            // Add labels to nodes
+            const labels = svg.append("g")
+                .attr("class", "labels")
+                .selectAll("text")
+                .data(nodes)
+                .enter().append("text")
+                .attr("dx", 12)
+                .attr("dy", ".35em")
+                .text(d => d.name);
+            
+            // Update positions on simulation tick
+            simulation
+                .nodes(nodes)
+                .on("tick", ticked);
+            
+            simulation.force("link")
+                .links(links);
+            
+            function ticked() {
+                link
+                    .attr("x1", d => d.source.x)
+                    .attr("y1", d => d.source.y)
+                    .attr("x2", d => d.target.x)
+                    .attr("y2", d => d.target.y);
+                
+                node
+                    .attr("cx", d => d.x = Math.max(10, Math.min(width - 10, d.x)))
+                    .attr("cy", d => d.y = Math.max(10, Math.min(height - 10, d.y)));
+                
+                labels
+                    .attr("x", d => d.x)
+                    .attr("y", d => d.y);
+            }
+            
+            function dragstarted(event, d) {
+                if (!event.active) simulation.alphaTarget(0.3).restart();
+                d.fx = d.x;
+                d.fy = d.y;
+            }
+            
+            function dragged(event, d) {
+                d.fx = event.x;
+                d.fy = event.y;
+            }
+            
+            function dragended(event, d) {
+                if (!event.active) simulation.alphaTarget(0);
+                d.fx = null;
+                d.fy = null;
+            }
+        }
+    </script>
+</body>
+</html>
