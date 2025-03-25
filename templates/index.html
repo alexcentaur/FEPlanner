@@ -133,6 +133,13 @@
             0% { transform: rotate(0deg); }
             100% { transform: rotate(360deg); }
         }
+        .mode-button {
+            background-color: #666;
+            margin-bottom: 10px;
+        }
+        .mode-button.connect-mode {
+            background-color: #CF581D;
+        }
     </style>
 </head>
 <body>
@@ -185,8 +192,11 @@
             <!-- Network Graph Tab -->
             <div id="network-tab" class="tab-content active">
                 <h3>FEP Network Graph</h3>
+                <div style="margin-bottom: 10px;">
+                    <button id="mode-toggle" class="mode-button">Switch to Connect Mode</button>
+                </div>
                 <div id="network-container"></div>
-                <p><b>Instructions:</b> Drag nodes to reposition. Scroll to zoom. Click on edges to view atom mappings.</p>
+                <p><b>Instructions:</b> Drag nodes to reposition. Scroll to zoom. Click on edges to view atom mappings. In connect mode, click two nodes to create a connection.</p>
             </div>
             
             <!-- Compounds Tab -->
@@ -335,7 +345,15 @@
             const nodes = network.nodes.map(node => ({
                 id: node.name,
                 label: node.name,
-                title: `${node.name}<br>${node.formula}<br>${node.num_atoms} atoms`
+                title: `${node.name}<br>${node.formula}<br>${node.num_atoms} atoms`,
+                color: {
+                    background: '#fff',
+                    border: '#666',
+                    highlight: {
+                        background: '#fff',
+                        border: '#CF581D'
+                    }
+                }
             }));
             
             // Create edges array for visualization
@@ -352,9 +370,15 @@
                 mapping: edge.mapping  // Store the mapping for later use
             }));
             
-            // Create the network visualization
+            // Create the network visualization with DataSets
             const container = document.getElementById('network-container');
-            const data = { nodes, edges };
+            const nodesDataSet = new vis.DataSet(nodes);
+            const edgesDataSet = new vis.DataSet(edges);
+            const data = { 
+                nodes: nodesDataSet,
+                edges: edgesDataSet
+            };
+            
             const options = {
                 nodes: {
                     shape: 'dot',
@@ -375,18 +399,88 @@
                         springLength: 150
                     }
                 },
-                interaction: { hover: true }
+                interaction: { 
+                    hover: true,
+                    multiselect: true
+                }
             };
             
             const network_viz = new vis.Network(container, data, options);
             
+            // Track connection mode and selected nodes
+            let isConnectMode = false;
+            let selectedNodes = [];
+            
+            // Mode toggle button functionality
+            const modeToggle = document.getElementById('mode-toggle');
+            modeToggle.addEventListener('click', function() {
+                isConnectMode = !isConnectMode;
+                this.textContent = isConnectMode ? 'Switch to View Mode' : 'Switch to Connect Mode';
+                this.classList.toggle('connect-mode', isConnectMode);
+                selectedNodes = [];
+                network_viz.unselectAll();
+            });
+            
+            // Handle node selection in connect mode
+            network_viz.on("selectNode", function(params) {
+                if (!isConnectMode) return;
+                
+                const selectedNodeId = params.nodes[0];
+                if (!selectedNodeId) return;
+                
+                // Store the current selection
+                const currentSelection = [...selectedNodes];
+                
+                if (selectedNodes.length === 0) {
+                    // First node selection
+                    selectedNodes.push(selectedNodeId);
+                    console.log('First node selected:', selectedNodeId);
+                } else if (selectedNodes.length === 1 && selectedNodeId !== selectedNodes[0]) {
+                    // Second node selection - create connection
+                    selectedNodes.push(selectedNodeId);
+                    console.log('Second node selected:', selectedNodeId);
+                    
+                    // Check if edge already exists
+                    const existingEdge = edgesDataSet.get().find(edge => 
+                        (edge.from === selectedNodes[0] && edge.to === selectedNodeId) ||
+                        (edge.from === selectedNodeId && edge.to === selectedNodes[0])
+                    );
+                    
+                    if (!existingEdge) {
+                        // Create new edge
+                        const newEdge = {
+                            id: Date.now().toString(), // Unique ID based on timestamp
+                            from: selectedNodes[0],
+                            to: selectedNodeId,
+                            label: '0.00',  // Default score
+                            width: 1,
+                            arrows: {
+                                to: { enabled: false }
+                            }
+                        };
+                        
+                        // Add edge to network
+                        edgesDataSet.add(newEdge);
+                        console.log('Added new edge:', newEdge);
+                    } else {
+                        console.log('Edge already exists between these nodes');
+                    }
+                    
+                    // Reset selection
+                    selectedNodes = [];
+                    network_viz.unselectAll();
+                }
+            });
+            
             // Allow clicking on edges to show atom mapping details
             network_viz.on("selectEdge", function(params) {
+                if (isConnectMode) return; // Disable edge selection in connect mode
+                
                 if (params.edges.length === 1) {
                     const edgeId = params.edges[0];
-                    const edge = edges.find(e => e.id === edgeId);
+                    const edge = edgesDataSet.get(edgeId);
                     if (edge) {
-                        const mappingText = JSON.stringify(edge.mapping, null, 2);
+                        const mappingText = edge.mapping ? JSON.stringify(edge.mapping, null, 2) : 'No mapping available';
                         alert(`Atom Mapping: ${edge.from} → ${edge.to}\n${mappingText}`);
                     }
                 }
