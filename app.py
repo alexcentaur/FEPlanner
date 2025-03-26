@@ -8,7 +8,11 @@ from rdkit import Chem
 from rdkit.Chem import AllChem, Draw
 import openfe
 from openfe.setup import LomapAtomMapper
-from openfe.setup.ligand_network_planning import generate_minimal_spanning_network
+from openfe.setup.ligand_network_planning import (
+    generate_minimal_spanning_network,
+    generate_minimal_redundant_network,
+    generate_radial_network
+)
 
 app = Flask(__name__)
 app.secret_key = os.urandom(24)  # For session management
@@ -48,6 +52,8 @@ def plan_fep_map():
     - threed: boolean (default: True) - use 3D information for mapping
     - max3d: float (default: 1.0) - maximum 3D distance for atom mapping
     - element_change: boolean (default: False) - allow changes in atom elements
+    - network_type: string (default: 'minimal_spanning') - type of network to generate
+    - center_ligand: string (required for radial network) - name of the ligand to use as center
     """
     # Check if file was provided in request
     if 'file' not in request.files:
@@ -82,8 +88,17 @@ def plan_fep_map():
         threed = request.form.get('threed', 'true').lower() == 'true'
         max3d = float(request.form.get('max3d', 1.0))
         element_change = request.form.get('element_change', 'false').lower() == 'true'
+        network_type = request.form.get('network_type', 'minimal_spanning')
+        center_ligand = request.form.get('center_ligand')
         
-        print(f"Processing file with parameters: threed={threed}, max3d={max3d}, element_change={element_change}")
+        print(f"Processing file with parameters: threed={threed}, max3d={max3d}, element_change={element_change}, network_type={network_type}, center_ligand={center_ligand}")
+        
+        # Validate center_ligand for radial network
+        if network_type == 'radial' and not center_ligand:
+            return jsonify({
+                'status': 'error',
+                'message': 'Center ligand is required for radial network'
+            }), 400
         
         # Save SDF content for molecule rendering
         try:
@@ -107,7 +122,7 @@ def plan_fep_map():
         print(f"Stored SDF in cache with ID: {sdf_id}")
         
         # Process file and generate FEP+ map
-        result = process_sdf_file(filepath, threed, max3d, element_change)
+        result = process_sdf_file(filepath, threed, max3d, element_change, network_type, center_ligand)
         
         # Add the SDF ID to the result
         result['sdf_id'] = sdf_id
@@ -239,7 +254,7 @@ def molecule_placeholder(name, formula):
     </svg>'''
     return svg, 200, {'Content-Type': 'image/svg+xml'}
 
-def process_sdf_file(filepath, threed=True, max3d=1.0, element_change=False):
+def process_sdf_file(filepath, threed=True, max3d=1.0, element_change=False, network_type='minimal_spanning', center_ligand=None):
     """
     Process an SDF file and generate an FEP+ map using Lomap atom mapper.
     
@@ -248,6 +263,8 @@ def process_sdf_file(filepath, threed=True, max3d=1.0, element_change=False):
         threed: Use 3D positions for mapping
         max3d: Maximum distance between atoms for mapping
         element_change: Allow element changes in mapping
+        network_type: Type of network to generate ('minimal_spanning', 'minimal_redundant', or 'radial')
+        center_ligand: Name of the ligand to use as center for radial network
     
     Returns:
         Dictionary containing the FEP+ mapping results
@@ -277,12 +294,38 @@ def process_sdf_file(filepath, threed=True, max3d=1.0, element_change=False):
     print(f"Mapper created: {mapper}")
     
     try:
-        # Generate the network using minimal spanning tree approach
-        network = generate_minimal_spanning_network(
-            ligands=ligands,
-            scorer=openfe.lomap_scorers.default_lomap_score,
-            mappers=[mapper]
-        )
+        # Generate the network based on selected type
+        if network_type == 'minimal_spanning':
+            network = generate_minimal_spanning_network(
+                ligands=ligands,
+                scorer=openfe.lomap_scorers.default_lomap_score,
+                mappers=[mapper]
+            )
+        elif network_type == 'minimal_redundant':
+            network = generate_minimal_redundant_network(
+                ligands=ligands,
+                scorer=openfe.lomap_scorers.default_lomap_score,
+                mappers=[mapper]
+            )
+        elif network_type == 'radial':
+            # Find the center ligand
+            center_ligand_component = None
+            for ligand in ligands:
+                if ligand.name == center_ligand:
+                    center_ligand_component = ligand
+                    break
+            
+            if not center_ligand_component:
+                raise ValueError(f"Center ligand '{center_ligand}' not found in the SDF file")
+            
+            network = generate_radial_network(
+                ligands=ligands,
+                central_ligand=center_ligand_component,
+                scorer=openfe.lomap_scorers.default_lomap_score,
+                mappers=[mapper]
+            )
+        else:
+            raise ValueError(f"Unsupported network type: {network_type}")
     except Exception as e:
         print(f"Error generating network: {str(e)}")
         import traceback
