@@ -140,6 +140,28 @@
         .mode-button.connect-mode {
             background-color: #CF581D;
         }
+        .node-tooltip {
+            position: absolute;
+            background: white;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            padding: 10px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+            z-index: 1000;
+            pointer-events: none;
+            max-width: 200px;
+        }
+        .node-tooltip img {
+            width: 150px;
+            height: 150px;
+            display: block;
+            margin: 0 auto;
+        }
+        .node-tooltip .title {
+            font-weight: bold;
+            margin-bottom: 5px;
+            text-align: center;
+        }
     </style>
 </head>
 <body>
@@ -330,7 +352,7 @@
                 html += `<li>${node.name} (${node.formula}, ${node.num_atoms} atoms)</li>`;
             });
             
-            html += `</ul><h3>Edges:</h3><ul>`;
+            html += `</ul><h3>Edges:</h3><ul id="edges-list">`;
             
             network.edges.forEach(edge => {
                 html += `<li>${edge.molecule_a} → ${edge.molecule_b} (Score: ${edge.score.toFixed(2)})</li>`;
@@ -340,7 +362,25 @@
             document.getElementById('result-content').innerHTML = html;
         }
         
+        function updateSummaryWithNewEdge(edge) {
+            const edgesList = document.getElementById('edges-list');
+            if (!edgesList) return;
+
+            // Update the total edges count in the summary
+            const summaryText = document.getElementById('result-content').firstElementChild;
+            const currentCount = parseInt(summaryText.textContent.match(/\d+ edges/)[0]);
+            summaryText.textContent = `Successfully generated FEP+ map with ${network.nodes.length} molecules and ${currentCount + 1} edges.`;
+
+            // Add the new edge to the list
+            const newEdgeLi = document.createElement('li');
+            newEdgeLi.textContent = `${edge.from} → ${edge.to} (Score: ${edge.label})`;
+            edgesList.appendChild(newEdgeLi);
+        }
+        
         function visualizeNetwork(network) {
+            // Store network data globally for summary updates
+            window.network = network;
+            
             // Create nodes array for visualization
             const nodes = network.nodes.map(node => ({
                 id: node.name,
@@ -353,7 +393,9 @@
                         background: '#fff',
                         border: '#CF581D'
                     }
-                }
+                },
+                smiles: node.smiles,  // Store SMILES for tooltip
+                formula: node.formula
             }));
             
             // Create edges array for visualization
@@ -406,6 +448,52 @@
             };
             
             const network_viz = new vis.Network(container, data, options);
+            
+            // Create tooltip element
+            const tooltip = document.createElement('div');
+            tooltip.className = 'node-tooltip';
+            tooltip.style.display = 'none';
+            document.body.appendChild(tooltip);
+            
+            // Handle node hover
+            network_viz.on("hoverNode", function(params) {
+                const node = nodesDataSet.get(params.node);
+                if (!node) return;
+                
+                // Position tooltip near the cursor
+                tooltip.style.left = params.event.pageX + 10 + 'px';
+                tooltip.style.top = params.event.pageY + 10 + 'px';
+                
+                // Create tooltip content
+                let content = `<div class="title">${node.label}</div>`;
+                
+                if (node.smiles) {
+                    // Use SMILES-based SVG service
+                    const encodedSmiles = encodeURIComponent(node.smiles);
+                    content += `<img src="/molecule-svg-from-smiles/${encodedSmiles}?width=150&height=150" alt="${node.label}">`;
+                } else {
+                    // Fallback to placeholder
+                    const encodedName = encodeURIComponent(node.label);
+                    const encodedFormula = encodeURIComponent(node.formula);
+                    content += `<img src="/molecule-placeholder/${encodedName}/${encodedFormula}" alt="${node.label}">`;
+                }
+                
+                tooltip.innerHTML = content;
+                tooltip.style.display = 'block';
+            });
+            
+            // Hide tooltip when mouse leaves node
+            network_viz.on("blurNode", function() {
+                tooltip.style.display = 'none';
+            });
+            
+            // Update tooltip position on mouse move
+            container.addEventListener('mousemove', function(e) {
+                if (tooltip.style.display === 'block') {
+                    tooltip.style.left = e.pageX + 10 + 'px';
+                    tooltip.style.top = e.pageY + 10 + 'px';
+                }
+            });
             
             // Track connection mode and selected nodes
             let isConnectMode = false;
@@ -462,6 +550,9 @@
                         // Add edge to network
                         edgesDataSet.add(newEdge);
                         console.log('Added new edge:', newEdge);
+                        
+                        // Update the summary tab
+                        updateSummaryWithNewEdge(newEdge);
                     } else {
                         console.log('Edge already exists between these nodes');
                     }
