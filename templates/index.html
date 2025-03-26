@@ -168,6 +168,29 @@
             <input type="checkbox" id="element-change" name="element_change">
         </div>
 
+        <div class="form-group">
+            <label for="network-type">Network Type:</label>
+            <div style="margin-top: 5px;">
+                <input type="radio" id="minimal-spanning" name="network-type" value="minimal_spanning" checked>
+                <label for="minimal-spanning" style="display: inline; font-weight: normal;">Minimal Spanning Network</label>
+            </div>
+            <div style="margin-top: 5px;">
+                <input type="radio" id="minimal-redundant" name="network-type" value="minimal_redundant">
+                <label for="minimal-redundant" style="display: inline; font-weight: normal;">Minimal Redundant Network</label>
+            </div>
+            <div style="margin-top: 5px;">
+                <input type="radio" id="radial" name="network-type" value="radial">
+                <label for="radial" style="display: inline; font-weight: normal;">Radial Network</label>
+            </div>
+        </div>
+
+        <div class="form-group" id="center-ligand-group" style="display: none;">
+            <label for="center-ligand">Center Ligand:</label>
+            <select id="center-ligand" name="center_ligand">
+                <option value="">Select a ligand...</option>
+            </select>
+        </div>
+
         <button type="submit">Generate FEP+ Map</button>
     </form>
     
@@ -224,7 +247,8 @@
             </div>
         </div>
         
-        <button id="download-json" style="margin-top: 15px;">Download JSON</button>
+        <button id="download-json" style="margin-top: 15px;">Download Full JSON</button>
+        <button id="download-edges" style="margin-top: 15px; margin-left: 10px;">Download Edges JSON</button>
     </div>
 
     <script>
@@ -241,6 +265,56 @@
             });
         });
         
+        // Add network type change handler
+        document.querySelectorAll('input[name="network-type"]').forEach(radio => {
+            radio.addEventListener('change', function() {
+                const centerLigandGroup = document.getElementById('center-ligand-group');
+                centerLigandGroup.style.display = this.value === 'radial' ? 'block' : 'none';
+            });
+        });
+
+        // Update center ligand dropdown when file is selected
+        document.getElementById('sdf-file').addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            // Read the SDF file to get ligand names
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                const content = e.target.result;
+                // Split by $$$$ and filter out empty entries
+                const molecules = content.split('$$$$').filter(mol => mol.trim());
+                const select = document.getElementById('center-ligand');
+                select.innerHTML = '<option value="">Select a ligand...</option>';
+                
+                molecules.forEach(mol => {
+                    // Split into lines and get the first line (molecule name)
+                    const lines = mol.split('\n');
+                    let name = '';
+                    
+                    // Find the first non-empty line that's not a comment
+                    for (let line of lines) {
+                        line = line.trim();
+                        if (line && !line.startsWith('>') && !line.startsWith('#')) {
+                            name = line;
+                            break;
+                        }
+                    }
+                    
+                    // If we found a name, add it to the dropdown
+                    if (name) {
+                        const option = document.createElement('option');
+                        option.value = name;
+                        option.textContent = name;
+                        select.appendChild(option);
+                    }
+                });
+                
+                console.log(`Found ${select.options.length - 1} ligands in SDF file`);
+            };
+            reader.readAsText(file);
+        });
+
         document.getElementById('upload-form').addEventListener('submit', async function(e) {
             e.preventDefault();
             
@@ -252,6 +326,17 @@
                 return;
             }
             
+            // Check if radial network is selected and center ligand is chosen
+            const networkType = document.querySelector('input[name="network-type"]:checked').value;
+            if (networkType === 'radial') {
+                const centerLigand = document.getElementById('center-ligand').value;
+                if (!centerLigand) {
+                    alert('Please select a center ligand for the radial network');
+                    return;
+                }
+                formData.append('center_ligand', centerLigand);
+            }
+            
             // Show loading indicator
             document.getElementById('loading').style.display = 'block';
             
@@ -261,6 +346,7 @@
             formData.append('threed', document.getElementById('threed').checked);
             formData.append('max3d', document.getElementById('max3d').value);
             formData.append('element_change', document.getElementById('element-change').checked);
+            formData.append('network_type', networkType);
             
             try {
                 const response = await fetch('/plan-fep-map', {
@@ -555,6 +641,29 @@
             const dataUri = 'data:application/json;charset=utf-8,'+ encodeURIComponent(dataStr);
             
             const exportFileDefaultName = 'fep_map.json';
+            
+            const linkElement = document.createElement('a');
+            linkElement.setAttribute('href', dataUri);
+            linkElement.setAttribute('download', exportFileDefaultName);
+            linkElement.click();
+        });
+
+        // Download edges button
+        document.getElementById('download-edges').addEventListener('click', function() {
+            if (!window.resultData || !window.resultData.network) return;
+            
+            // Extract and format edges data
+            const edgesData = window.resultData.network.edges.map(edge => ({
+                molecule_a: edge.molecule_a,
+                molecule_b: edge.molecule_b,
+                score: edge.score,
+                mapping: edge.mapping
+            }));
+            
+            const dataStr = JSON.stringify(edgesData, null, 2);
+            const dataUri = 'data:application/json;charset=utf-8,'+ encodeURIComponent(dataStr);
+            
+            const exportFileDefaultName = 'fep_edges.json';
             
             const linkElement = document.createElement('a');
             linkElement.setAttribute('href', dataUri);
